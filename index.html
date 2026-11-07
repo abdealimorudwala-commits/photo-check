@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Evaluator Photo Check</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#1a1d24; --text:#f2f4f8; --muted:#9aa3b2;
+    --ok:#22c55e; --bad:#f59e0b; --accent:#6d5efc; --line:#2a2f3a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+  .screen{display:none;min-height:100vh;min-height:100dvh;padding:20px 16px 28px;max-width:520px;margin:0 auto}
+  .screen.active{display:block}
+  h1{font-size:22px;margin:4px 0 6px}
+  p.sub{color:var(--muted);margin:0 0 18px;font-size:15px;line-height:1.45}
+  .tips{list-style:none;padding:0;margin:0 0 20px;display:grid;gap:10px}
+  .tips li{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:15px;line-height:1.4;display:flex;gap:12px;align-items:flex-start}
+  .tips b{display:block;margin-bottom:2px}
+  .ico{font-size:20px;line-height:1.2}
+  button{font:inherit;border:0;border-radius:12px;padding:15px 18px;font-weight:600;font-size:16px;cursor:pointer;width:100%}
+  .primary{background:var(--accent);color:#fff}
+  .ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  button:disabled{opacity:.5}
+  .row{display:grid;gap:10px;margin-top:12px}
+
+  .stage{position:relative;width:100%;max-width:420px;margin:0 auto;aspect-ratio:7/9;background:#000;border-radius:14px;overflow:hidden}
+  .stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .guide{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  .guide .shape{fill:none;stroke:#fff;stroke-width:.6;stroke-dasharray:2.5 2;opacity:.9}
+  .guide .eyeline{stroke:#fff;stroke-width:.3;opacity:.5;stroke-dasharray:1 1.5}
+  .stage.good .guide .shape{stroke:var(--ok);stroke-dasharray:none;stroke-width:.9}
+  .msg{margin:14px 2px 8px;min-height:56px;font-size:20px;font-weight:700;line-height:1.3;text-align:center}
+  .msg.good{color:var(--ok)} .msg.bad{color:var(--bad)}
+  .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:0 auto 14px;max-width:420px}
+  .bar i{display:block;height:100%;width:0;background:var(--ok)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;justify-content:center}
+  .chip{font-size:12.5px;padding:5px 9px;border-radius:999px;background:var(--card);border:1px solid var(--line);color:var(--muted)}
+  .chip.ok{color:var(--ok);border-color:#1f6b3d}
+  .chip.bad{color:var(--bad);border-color:#7a5416}
+  .chip.tip{color:#c7b8ff;border-color:#4a3fa8}
+  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .topbar button{width:auto;padding:9px 14px;font-size:14px}
+  .result img{width:100%;max-width:420px;margin:0 auto;border-radius:14px;display:block;aspect-ratio:7/9;object-fit:cover}
+  label{display:block;font-size:14px;color:var(--muted);margin:14px 0 6px}
+  input{width:100%;font:inherit;padding:13px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text)}
+  .note{font-size:13px;color:var(--muted);margin-top:12px;line-height:1.4}
+  .err{background:#3a1d1d;border:1px solid #7a2a2a;color:#ffd0d0;border-radius:12px;padding:14px;font-size:15px;line-height:1.4;margin-bottom:14px}
+</style>
+</head>
+<body>
+
+<!-- 1. Instructions -->
+<section id="s-intro" class="screen active">
+  <h1>Evaluator photo</h1>
+  <p class="sub">A passport-style photo. This page checks it as you take it, so you only submit a good one. Nothing is uploaded from this page.</p>
+  <ul class="tips">
+    <li><span class="ico">🙂</span><div><b>Face</b>Look straight at the camera, neutral expression, mouth closed, eyes open. No sunglasses, mask or cap. Remove anything covering your forehead.</div></li>
+    <li><span class="ico">💡</span><div><b>Light</b>Face a window or bright light so your face is evenly lit. Never stand with the light behind you.</div></li>
+    <li><span class="ico">🧱</span><div><b>Background</b>Plain wall behind you, nobody else in the frame. Wear your Spinny uniform.</div></li>
+    <li><span class="ico">📱</span><div><b>Phone</b>Ask a colleague to take it with the back camera: phone upright at your eye level, about 1–1.5 m away. Selfies are not allowed (they distort the face).</div></li>
+  </ul>
+  <div id="intro-err" class="err" style="display:none"></div>
+  <button class="primary" id="btn-start">Open camera</button>
+</section>
+
+<!-- 2. Camera -->
+<section id="s-cam" class="screen">
+  <div class="topbar">
+    <button class="ghost" id="btn-back">← Back</button>
+  </div>
+  <div class="stage" id="stage">
+    <video id="video" playsinline muted autoplay></video>
+    <svg class="guide" viewBox="0 0 70 90" preserveAspectRatio="none">
+      <ellipse class="shape" cx="35" cy="37" rx="14" ry="19"/>
+      <line class="eyeline" x1="10" y1="36" x2="60" y2="36"/>
+      <path class="shape" d="M 3 90 Q 5 66 22 61 M 67 90 Q 65 66 48 61"/>
+    </svg>
+  </div>
+  <div class="msg" id="msg">Starting camera…</div>
+  <div class="bar"><i id="bar"></i></div>
+  <div class="chips" id="chips"></div>
+</section>
+
+<!-- 3. Result -->
+<section id="s-res" class="screen result">
+  <h1>Photo accepted ✅</h1>
+  <p class="sub">It passed every check. Two steps left:</p>
+  <img id="out" alt="Your photo">
+  <ul class="tips" style="margin-top:16px">
+    <li><span class="ico">1️⃣</span><div><b>Save the photo</b>It is saved to your phone automatically. If you don't see it in your Downloads or Gallery, tap "Save photo again". On iPhone, choose "Save Image" in the menu that opens.</div></li>
+    <li><span class="ico">2️⃣</span><div><b>Submit it in the form</b>Tap the button below, pick your name or ID, and attach this saved photo.</div></li>
+  </ul>
+  <div class="row">
+    <button class="primary" id="btn-form">Open the submission form</button>
+    <button class="ghost" id="btn-save">Save photo again</button>
+    <button class="ghost" id="btn-retake">Retake</button>
+  </div>
+  <div class="note" id="share-note"></div>
+</section>
+
+<script type="module">
+import { FaceDetector, FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+/* ---------------- Tunable standard (change numbers here) ----------------
+   All positions are fractions of the 7:9 frame. Face box = forehead-to-chin
+   box from the detector. Use ?debug and read window.__dbg to see real values. */
+const STD = {
+  faceHMin: 0.24, faceHMax: 0.38,        // face box height / frame height (smaller = more shoulders)
+  eyeYMin: 0.33,  eyeYMax: 0.48,         // eye line height from top
+  centerMin: 0.40, centerMax: 0.60,      // face centre, horizontal
+  yawMax: 0.28,                          // nose offset from eye midpoint / eye distance
+  tiltMaxDeg: 8,
+  lumaMin: 45, lumaMax: 235,             // face brightness (0-255): only block really dark / blown-out
+  backlightDiff: 100, backlightFaceMax: 110, // blocked only if background far brighter AND face dark
+  sharpMin: 25,                          // Laplacian variance on face area
+  busyBg: 22,                            // side-strip edge strength (tip only)
+  blinkMax: 0.5, jawOpenMax: 0.30,       // final-photo checks (eyes open, mouth closed)
+  detScore: 0.6,
+  holdMs: 1200,
+  outW: 1050, outH: 1350                 // 7:9 passport ratio
+};
+/* >>> PASTE YOUR GOOGLE FORM LINK between the quotes <<< */
+const FORM_URL = "https://forms.gle/vR5cJuaoKNqREEJ26";
+const AR = 7 / 9;
+const AW = 240, AH = Math.round(AW / AR);   // small analysis canvas = fast
+const DEBUG = new URLSearchParams(location.search).has("debug");
+
+const $ = id => document.getElementById(id);
+const screens = { intro: $("s-intro"), cam: $("s-cam"), res: $("s-res") };
+const show = n => Object.entries(screens).forEach(([k, el]) => el.classList.toggle("active", k === n));
+
+const video = $("video");
+const small = document.createElement("canvas"); small.width = AW; small.height = AH;
+const sctx = small.getContext("2d", { willReadFrequently: true });
+
+let stream = null, facing = "environment", /* back camera only */ detector = null, landmarker = null, running = false, busy = false;
+let holdStart = 0, lastNose = null, finalBlob = null, flash = null, timer = null;
+
+/* ---------------- Camera ---------------- */
+async function startCamera() {
+  stopCamera();
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: facing }, width: { ideal: 1080 }, height: { ideal: 1440 } }
+  });
+  video.srcObject = stream;
+  await video.play();
+  video.style.transform = facing === "user" ? "scaleX(-1)" : "none";
+}
+function stopCamera() {
+  running = false; clearTimeout(timer);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+}
+function cropRect(vw, vh) {
+  const sw = Math.min(vw, vh * AR), sh = sw / AR;
+  return [(vw - sw) / 2, (vh - sh) / 2, sw, sh];
+}
+
+/* ---------------- Models ---------------- */
+const BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const GS = "https://storage.googleapis.com/mediapipe-models/";
+let filesetP = null;
+async function loadDetector() {
+  if (detector) return;
+  filesetP = filesetP || FilesetResolver.forVisionTasks(BASE);
+  const fileset = await filesetP;
+  const opts = d => ({ baseOptions: { modelAssetPath: GS + "face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite", delegate: d }, runningMode: "IMAGE", minDetectionConfidence: STD.detScore });
+  try { detector = await FaceDetector.createFromOptions(fileset, opts("GPU")); }
+  catch (e) { detector = await FaceDetector.createFromOptions(fileset, opts("CPU")); }
+  loadLandmarkerInBackground();
+}
+async function loadLandmarkerInBackground() {
+  try {
+    const fileset = await filesetP;
+    landmarker = await FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: GS + "face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "CPU" },
+      runningMode: "IMAGE", numFaces: 1, outputFaceBlendshapes: true
+    });
+  } catch (e) { landmarker = null; /* optional: eyes/mouth check is skipped */ }
+}
+
+/* ---------------- Image measurements (small canvas) ---------------- */
+function grayOf(img) {
+  const d = img.data, g = new Float32Array(img.width * img.height);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  return g;
+}
+const clampi = (v, lo, hi) => Math.max(lo, Math.min(hi, v | 0));
+function meanRegion(g, x0, y0, x1, y1) {
+  x0 = clampi(x0, 0, AW); x1 = clampi(x1, 0, AW); y0 = clampi(y0, 0, AH); y1 = clampi(y1, 0, AH);
+  let s = 0, n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { s += g[y * AW + x]; n++; }
+  return n ? s / n : 0;
+}
+function laplacianVar(g, x0, y0, x1, y1) {
+  x0 = clampi(x0, 1, AW - 1); x1 = clampi(x1, 1, AW - 1); y0 = clampi(y0, 1, AH - 1); y1 = clampi(y1, 1, AH - 1);
+  let s = 0, s2 = 0, n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    const i = y * AW + x;
+    const l = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - AW] - g[i + AW];
+    s += l; s2 += l * l; n++;
+  }
+  if (!n) return 0;
+  const m = s / n; return s2 / n - m * m;
+}
+function edgeStrength(g, x0, y0, x1, y1) {
+  x0 = clampi(x0, 0, AW - 1); x1 = clampi(x1, 0, AW - 1); y0 = clampi(y0, 0, AH - 1); y1 = clampi(y1, 0, AH - 1);
+  let s = 0, n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    const i = y * AW + x;
+    s += Math.abs(g[i + 1] - g[i]) + Math.abs(g[i + AW] - g[i]); n++;
+  }
+  return n ? s / n : 0;
+}
+
+/* ---------------- The checks ---------------- */
+function evaluate(res, g) {
+  const out = [];
+  const add = (id, label, ok, msg, tip = false) => out.push({ id, label, ok, msg, tip });
+  const dets = (res && res.detections) || [];
+
+  if (dets.length === 0) { add("face", "Face visible", false, "I can't see your face. Look at the camera."); return { checks: out, nose: null }; }
+  if (dets.length > 1) { add("face", "One person", false, "Only one person should be in the photo."); return { checks: out, nose: null }; }
+  add("face", "One face", true, "");
+
+  const d = dets[0], bb = d.boundingBox, k = d.keypoints;
+  const fx = bb.originX, fy = bb.originY, fw = bb.width, fh = bb.height;
+  const eyeA = { x: k[0].x * AW, y: k[0].y * AH }, eyeB = { x: k[1].x * AW, y: k[1].y * AH };
+  const nose = { x: k[2].x * AW, y: k[2].y * AH };
+  const eyeMid = { x: (eyeA.x + eyeB.x) / 2, y: (eyeA.y + eyeB.y) / 2 };
+  const eyeDist = Math.max(Math.hypot(eyeA.x - eyeB.x, eyeA.y - eyeB.y), 1);
+
+  const faceH = fh / AH;
+  if (faceH < STD.faceHMin) add("size", "Distance", false, "Too far. Move closer.");
+  else if (faceH > STD.faceHMax) add("size", "Distance", false, "Too close. Move back a little.");
+  else add("size", "Distance", true, "");
+
+  const cx = (fx + fw / 2) / AW;
+  add("center", "Centered", cx >= STD.centerMin && cx <= STD.centerMax, "Move your face to the center of the frame.");
+
+  const ey = eyeMid.y / AH;
+  if (ey < STD.eyeYMin) add("eyes", "Height", false, "Your face is too high. Tilt the phone up a little.");
+  else if (ey > STD.eyeYMax) add("eyes", "Height", false, "Your face is too low. Tilt the phone down a little.");
+  else add("eyes", "Height", true, "");
+
+  const yaw = Math.abs(nose.x - eyeMid.x) / eyeDist;
+  add("facing", "Facing camera", yaw < STD.yawMax, "Turn your face straight to the camera.");
+
+  const tilt = Math.abs(Math.atan2(eyeB.y - eyeA.y, Math.abs(eyeB.x - eyeA.x)) * 180 / Math.PI);
+  add("tilt", "Straight", tilt < STD.tiltMaxDeg, "Keep your head level. Hold the phone upright.");
+
+  const faceLuma = meanRegion(g, fx + fw * 0.15, fy + fh * 0.1, fx + fw * 0.85, fy + fh * 0.9);
+  const bgLuma = (meanRegion(g, 0, 0, AW * 0.2, AH * 0.4) + meanRegion(g, AW * 0.8, 0, AW, AH * 0.4)) / 2;
+  if (faceLuma < STD.lumaMin) add("light", "Lighting", false, "Too dark. Face a window or a brighter light.");
+  else if (faceLuma > STD.lumaMax) add("light", "Lighting", false, "Too bright. Move away from direct light.");
+  else if (bgLuma - faceLuma > STD.backlightDiff && faceLuma < STD.backlightFaceMax) add("light", "Lighting", false, "Light is behind you. Turn so the light is in front of you.");
+  else add("light", "Lighting", true, "");
+
+  const sharp = laplacianVar(g, fx + fw * 0.1, fy, fx + fw * 0.9, fy + fh);
+  add("sharp", "Sharp", sharp > STD.sharpMin, "Photo looks blurry. Hold steady and wipe the lens.");
+
+  const edge = (edgeStrength(g, 0, AH * 0.05, AW * 0.15, AH * 0.6) + edgeStrength(g, AW * 0.85, AH * 0.05, AW, AH * 0.6)) / 2;
+  add("bg", "Plain background", edge < STD.busyBg, "Tip: use a plainer wall behind you.", true);
+
+  if (DEBUG) window.__dbg = { faceH, cx, eyeY: ey, yaw, tilt, faceLuma, bgLuma, sharp, edge };
+  return { checks: out, nose };
+}
+
+/* ---------------- Main loop (background, ~5 fps; preview stays smooth) ---------------- */
+function renderChecks(checks) {
+  $("chips").innerHTML = checks.map(c =>
+    `<span class="chip ${c.ok ? "ok" : (c.tip ? "tip" : "bad")}">${c.ok ? "✓" : (c.tip ? "i" : "•")} ${c.label}</span>`).join("");
+}
+function setMsg(cls, text) { $("msg").className = "msg " + cls; $("msg").textContent = text; }
+
+async function step() {
+  if (!running) return;
+  const t0 = performance.now();
+  try {
+    if (video.readyState >= 2 && !busy) {
+      const [sx, sy, sw, sh] = cropRect(video.videoWidth, video.videoHeight);
+      sctx.drawImage(video, sx, sy, sw, sh, 0, 0, AW, AH);
+      const g = grayOf(sctx.getImageData(0, 0, AW, AH));
+      const res = detector.detect(small);
+      const { checks, nose } = evaluate(res, g);
+      renderChecks(checks);
+
+      const blocking = checks.filter(c => !c.tip && !c.ok);
+      const stage = $("stage"), bar = $("bar");
+      let steady = true;
+      if (nose && lastNose) steady = Math.hypot(nose.x - lastNose.x, nose.y - lastNose.y) < AW * 0.02;
+      lastNose = nose;
+      const now = performance.now();
+
+      if (blocking.length) {
+        holdStart = 0; bar.style.width = "0"; stage.classList.remove("good");
+        if (flash && now < flash.until) setMsg("bad", flash.text); else setMsg("bad", blocking[0].msg);
+      } else {
+        stage.classList.add("good");
+        if (!steady) { holdStart = 0; bar.style.width = "0"; setMsg("good", "Hold still…"); }
+        else {
+          if (!holdStart) holdStart = now;
+          const p = Math.min(1, (now - holdStart) / STD.holdMs);
+          bar.style.width = (p * 100) + "%";
+          setMsg("good", "Perfect. Hold still…");
+          if (p >= 1) { await capture(); return; }
+        }
+      }
+    }
+  } catch (e) { /* skip frame */ }
+  timer = setTimeout(step, Math.max(0, 200 - (performance.now() - t0)));
+}
+
+async function capture() {
+  busy = true;
+  const [sx, sy, sw, sh] = cropRect(video.videoWidth, video.videoHeight);
+  const c = document.createElement("canvas");
+  const scale = Math.min(1, STD.outW / sw);
+  c.width = Math.round(sw * scale); c.height = Math.round(sh * scale);
+  c.getContext("2d").drawImage(video, sx, sy, sw, sh, 0, 0, c.width, c.height);
+
+  // final-photo check: eyes open, mouth closed (skipped if landmarker not ready)
+  if (landmarker) {
+    try {
+      const r = landmarker.detect(c);
+      const bs = r.faceBlendshapes && r.faceBlendshapes[0] && r.faceBlendshapes[0].categories;
+      if (bs) {
+        const v = n => (bs.find(x => x.categoryName === n) || { score: 0 }).score;
+        if (Math.max(v("eyeBlinkLeft"), v("eyeBlinkRight")) > STD.blinkMax) return reject("Your eyes looked closed. Keep them open and try again.");
+        if (v("jawOpen") > STD.jawOpenMax) return reject("Keep your mouth closed with a neutral expression.");
+      } else if (!r.faceLandmarks || !r.faceLandmarks.length) return reject("Could not see your face clearly. Try again.");
+    } catch (e) { /* ignore, accept photo */ }
+  }
+  c.toBlob(b => {
+    finalBlob = b;
+    $("out").src = URL.createObjectURL(b);
+    stopCamera(); busy = false; savedName = "";
+    show("res"); $("share-note").textContent = "";
+    if (!/iPhone|iPad/i.test(navigator.userAgent)) savePhoto(true);   // iPhone: use the Save button (share sheet)
+  }, "image/jpeg", 0.95);
+}
+function reject(text) {
+  flash = { text, until: performance.now() + 2500 };
+  holdStart = 0; busy = false; $("bar").style.width = "0";
+  setMsg("bad", text);
+  timer = setTimeout(step, 600);
+}
+
+/* ---------------- Buttons ---------------- */
+async function openCamera() {
+  $("intro-err").style.display = "none";
+  show("cam"); setMsg("", "Starting camera…");
+  $("stage").classList.remove("good"); $("chips").innerHTML = "";
+  try {
+    await startCamera();
+    setMsg("", "Loading checker (first time takes a few seconds)…");
+    await loadDetector();
+    holdStart = 0; lastNose = null; flash = null; busy = false; running = true;
+    step();
+  } catch (e) {
+    stopCamera(); show("intro");
+    const err = $("intro-err"); err.style.display = "block";
+    err.textContent = (e && e.name === "NotAllowedError")
+      ? "Camera permission was denied. Allow camera access for this page in your browser settings, then try again."
+      : "Could not start the camera or the checker (" + (e && e.message ? e.message : e) + "). Check your internet connection and open the link in Chrome.";
+  }
+}
+$("btn-start").onclick = openCamera;
+$("btn-back").onclick = () => { stopCamera(); show("intro"); };
+$("btn-retake").onclick = openCamera;
+
+function fileName() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `evaluator_photo_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.jpg`;
+}
+let savedName = "";
+function savePhoto(announce) {
+  savedName = savedName || fileName();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(finalBlob); a.download = savedName;
+  document.body.appendChild(a); a.click(); a.remove();
+  if (announce) $("share-note").textContent = "Saved as " + savedName + " (check Downloads or Gallery).";
+}
+// Save button: on phones that support it, the share sheet gives a "Save Image" option (best on iPhone)
+$("btn-save").onclick = async () => {
+  savedName = savedName || fileName();
+  const f = new File([finalBlob], savedName, { type: "image/jpeg" });
+  if (/iPhone|iPad/i.test(navigator.userAgent) && navigator.canShare && navigator.canShare({ files: [f] })) {
+    try { await navigator.share({ files: [f] }); return; } catch (e) { return; }
+  }
+  savePhoto(true);
+};
+$("btn-form").onclick = () => {
+  if (!FORM_URL || FORM_URL.startsWith("PASTE_")) {
+    $("share-note").textContent = "The form link has not been set up yet. Please tell the photo project owner.";
+    return;
+  }
+  window.open(FORM_URL, "_blank", "noopener");
+};
+
+if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+  const err = $("intro-err"); err.style.display = "block";
+  err.textContent = "This page must be opened over https in Chrome or Safari to use the camera.";
+  $("btn-start").disabled = true;
+}
+window.__test = { evaluate, STD, AW, AH, loadDetector, get detector() { return detector; } };
+</script>
+</body>
+</html>
