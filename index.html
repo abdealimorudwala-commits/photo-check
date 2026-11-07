@@ -60,7 +60,7 @@
   <ul class="tips">
     <li><span class="ico">🙂</span><div><b>Face</b>Look straight at the camera, neutral expression, mouth closed, eyes open. No sunglasses, mask or cap. Remove anything covering your forehead.</div></li>
     <li><span class="ico">💡</span><div><b>Light</b>Face a window or bright light so your face is evenly lit. Never stand with the light behind you.</div></li>
-    <li><span class="ico">🧱</span><div><b>Background</b>Plain wall behind you, nobody else in the frame. Wear your Spinny uniform.</div></li>
+    <li><span class="ico">🧱</span><div><b>Background (strict)</b>Stand in front of a bare, plain wall, light coloured if you can. Nothing behind you: no door, switch, curtain, shelf, window or poster. Nobody else in the frame. Wear your Spinny uniform. The camera will not take the photo until the wall is plain.</div></li>
     <li><span class="ico">📱</span><div><b>Phone</b>Ask a colleague to take it with the back camera: phone upright at your eye level, about 1–1.5 m away. Selfies are not allowed (they distort the face).</div></li>
   </ul>
   <div id="intro-err" class="err" style="display:none"></div>
@@ -83,6 +83,7 @@
   <div class="msg" id="msg">Starting camera…</div>
   <div class="bar"><i id="bar"></i></div>
   <div class="chips" id="chips"></div>
+  <div class="note" id="dbg" style="text-align:center"></div>
 </section>
 
 <!-- 3. Result -->
@@ -124,7 +125,10 @@ const STD = {
   lumaMin: 45, lumaMax: 235,             // face brightness (0-255): only block really dark / blown-out
   backlightDiff: 100, backlightFaceMax: 110, // blocked only if background far brighter AND face dark
   sharpMin: 25,                          // Laplacian variance on face area
-  busyBg: 22,                            // side-strip edge strength (tip only)
+  // STRICT plain-wall rule, measured on the strips left and right of the person (upper part of the frame):
+  bgDetailMax: 1.5,                      // fine detail / clutter (high-pass); bare wall is below ~1.5, doors/switches/curtains are higher
+  bgSdMax: 12,                           // colour variation inside each strip
+  bgLumaMin: 50,                         // background must not be dark (night scenes)
   blinkMax: 0.5, jawOpenMax: 0.30,       // final-photo checks (eyes open, mouth closed)
   detScore: 0.6,
   holdMs: 1200,
@@ -154,6 +158,7 @@ const show = n => Object.entries(screens).forEach(([k, el]) => el.classList.togg
 const video = $("video");
 const small = document.createElement("canvas"); small.width = AW; small.height = AH;
 const sctx = small.getContext("2d", { willReadFrequently: true });
+sctx.imageSmoothingQuality = "high";   // proper averaging when shrinking the camera frame, so the wall measurement is steady across phones
 
 let stream = null, facing = "environment", /* back camera only */ detector = null, landmarker = null, running = false, busy = false;
 let holdStart = 0, lastNose = null, finalBlob = null, flash = null, timer = null;
@@ -236,8 +241,38 @@ function edgeStrength(g, x0, y0, x1, y1) {
   return n ? s / n : 0;
 }
 
+// separable box blur with mirrored borders (same as OpenCV's cv2.blur), used for the high-pass "detail" measure
+function boxBlur(g, w, h, r) {
+  const tmp = new Float32Array(w * h), out = new Float32Array(w * h), n = 2 * r + 1;
+  const refl = (i, m) => { if (i < 0) i = -i; if (i >= m) i = 2 * (m - 1) - i; return i; };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let s = 0; for (let k = -r; k <= r; k++) s += g[y * w + refl(x + k, w)]; tmp[y * w + x] = s / n;
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let s = 0; for (let k = -r; k <= r; k++) s += tmp[refl(y + k, h) * w + x]; out[y * w + x] = s / n;
+  }
+  return out;
+}
+// Background plainness: worst of the two side strips (clutter detail, colour variation) and their average brightness
+function bgMetrics(g, px) {
+  const blur = boxBlur(g, AW, AH, 7);
+  const y0 = Math.floor(AH * 0.04), y1 = Math.floor(AH * 0.38), xL = Math.floor(AW * 0.16), xR = Math.floor(AW * 0.84);
+  let worstSd = 0, worstDetail = 0, lumaSum = 0, count = 0;
+  for (const [xa, xb] of [[0, xL], [xR, AW]]) {
+    const s = [0, 0, 0], s2 = [0, 0, 0]; let det = 0, c = 0, ls = 0;
+    for (let y = y0; y < y1; y++) for (let x = xa; x < xb; x++) {
+      const i = y * AW + x, p = i * 4;
+      for (let k = 0; k < 3; k++) { const v = px[p + k]; s[k] += v; s2[k] += v * v; }
+      det += Math.abs(g[i] - blur[i]); ls += g[i]; c++;
+    }
+    const sd = [0, 1, 2].map(k => Math.sqrt(Math.max(s2[k] / c - (s[k] / c) ** 2, 0))).reduce((a, b) => a + b, 0) / 3;
+    worstSd = Math.max(worstSd, sd); worstDetail = Math.max(worstDetail, det / c); lumaSum += ls; count += c;
+  }
+  return { sd: worstSd, detail: worstDetail, luma: lumaSum / count };
+}
+
 /* ---------------- The checks ---------------- */
-function evaluate(res, g) {
+function evaluate(res, g, px) {
   const out = [];
   const add = (id, label, ok, msg, tip = false) => out.push({ id, label, ok, msg, tip });
   const dets = (res && res.detections) || [];
@@ -282,10 +317,14 @@ function evaluate(res, g) {
   const sharp = laplacianVar(g, fx + fw * 0.1, fy, fx + fw * 0.9, fy + fh);
   add("sharp", "Sharp", sharp > STD.sharpMin, "Photo looks blurry. Hold steady and wipe the lens.");
 
-  const edge = (edgeStrength(g, 0, AH * 0.05, AW * 0.15, AH * 0.6) + edgeStrength(g, AW * 0.85, AH * 0.05, AW, AH * 0.6)) / 2;
-  add("bg", "Plain background", edge < STD.busyBg, "Tip: use a plainer wall behind you.", true);
+  // STRICT: the wall behind you must be bare and plain. This blocks the photo (it is not just a tip).
+  const bm = px ? bgMetrics(g, px) : { sd: 0, detail: 0, luma: 255 };
+  const plain = bm.detail < STD.bgDetailMax && bm.sd < STD.bgSdMax && bm.luma > STD.bgLumaMin;
+  add("bg", "Plain wall", plain, bm.luma <= STD.bgLumaMin
+    ? "It is too dark behind you. Stand in front of a bright, bare wall."
+    : "Stand in front of a bare, plain wall. Nothing behind you: no door, switch, curtain, shelf, window or poster.");
 
-  if (DEBUG) window.__dbg = { faceH, cx, eyeY: ey, yaw, tilt, faceLuma, bgLuma, sharp, edge };
+  if (DEBUG) window.__dbg = { faceH, cx, eyeY: ey, yaw, tilt, faceLuma, bgLuma, sharp, bg: bm };
   return { checks: out, nose };
 }
 
@@ -303,9 +342,14 @@ async function step() {
     if (video.readyState >= 2 && !busy) {
       const [sx, sy, sw, sh] = cropRect(video.videoWidth, video.videoHeight);
       sctx.drawImage(video, sx, sy, sw, sh, 0, 0, AW, AH);
-      const g = grayOf(sctx.getImageData(0, 0, AW, AH));
+      const imgd = sctx.getImageData(0, 0, AW, AH);
+      const g = grayOf(imgd);
       const res = detector.detect(small);
-      const { checks, nose } = evaluate(res, g);
+      const { checks, nose } = evaluate(res, g, imgd.data);
+      if (DEBUG && window.__dbg && window.__dbg.bg) {            // ?debug on the link shows the wall measurement on screen
+        const b = window.__dbg.bg;
+        $("dbg").textContent = `wall detail ${b.detail.toFixed(2)} (max ${STD.bgDetailMax}) | colour ${b.sd.toFixed(1)} (max ${STD.bgSdMax}) | brightness ${b.luma.toFixed(0)} (min ${STD.bgLumaMin})`;
+      }
       renderChecks(checks);
 
       const blocking = checks.filter(c => !c.tip && !c.ok);
@@ -517,7 +561,7 @@ if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
   err.textContent = "This page must be opened over https in Chrome or Safari to use the camera.";
   $("btn-start").disabled = true;
 }
-window.__test = { evaluate, STD, AW, AH, loadDetector, get detector() { return detector; }, makeCode, formLink, onAccepted, setBlob: b => { finalBlob = b; } };
+window.__test = { evaluate, bgMetrics, boxBlur, AW_: AW, STD, AW, AH, loadDetector, get detector() { return detector; }, makeCode, formLink, onAccepted, setBlob: b => { finalBlob = b; } };
 </script>
 </body>
 </html>
