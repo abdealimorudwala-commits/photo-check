@@ -128,7 +128,8 @@ const STD = {
   blinkMax: 0.5, jawOpenMax: 0.30,       // final-photo checks (eyes open, mouth closed)
   detScore: 0.6,
   holdMs: 1200,
-  outW: 1050, outH: 1350                 // 7:9 passport ratio
+  outW: 2100,                            // max width of the saved photo (7:9 ratio); smaller phones keep their native size
+  jpegQuality: 0.98                      // 0-1, higher = better quality, bigger file
 };
 /* ---------------- Where the photo and the form are ----------------
    CLOUD_NAME / UPLOAD_PRESET: from your Cloudinary account (unsigned upload preset).
@@ -162,7 +163,7 @@ async function startCamera() {
   stopCamera();
   stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
-    video: { facingMode: { ideal: facing }, width: { ideal: 1080 }, height: { ideal: 1440 } }
+    video: { facingMode: { ideal: facing }, width: { ideal: 2160 }, height: { ideal: 2880 } }
   });
   video.srcObject = stream;
   await video.play();
@@ -358,7 +359,7 @@ async function capture() {
     $("out").src = URL.createObjectURL(b);
     stopCamera(); busy = false; savedName = "";
     onAccepted();
-  }, "image/jpeg", 0.95);
+  }, "image/jpeg", STD.jpegQuality);
 }
 function reject(text) {
   flash = { text, until: performance.now() + 2500 };
@@ -427,7 +428,7 @@ function uploadPhoto(blob, code, onProgress) {
     fd.append("public_id", code);
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "https://api.cloudinary.com/v1_1/" + CLOUD_NAME + "/image/upload");
-    xhr.timeout = 120000;
+    xhr.timeout = 240000;     // bigger photos need longer on a weak signal
     xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
     xhr.onload = () => {
       let j = {};
